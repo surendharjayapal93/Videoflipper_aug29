@@ -115,6 +115,11 @@ def download_video(youtube_url: str, dest_path: Path) -> VideoMetadata:
         "no_warnings": True,
         "logger": logger,
         "merge_output_format": "mp4",
+        # Bounds a stalled connection to a bounded number of retries rather
+        # than hanging indefinitely — the periodic stuck-job watchdog
+        # (see app/services/video_service.py::reap_stuck_jobs) is the
+        # backstop for anything that still gets past this.
+        "socket_timeout": 30,
     }
 
     try:

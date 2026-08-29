@@ -12,6 +12,7 @@ directory, so tests never leave files behind in the repo.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 import pytest
@@ -296,3 +297,59 @@ def test_delete_video_not_owned_returns_404(
     response = client.delete(f"/api/v1/videos/{other_video.id}", headers=auth_headers)
 
     assert response.status_code == 404
+
+
+# --- reap_stuck_jobs (watchdog) --------------------------------------------------
+
+
+def test_reap_stuck_jobs_marks_all_active_when_no_age_threshold(
+    db: Session, registered_user
+) -> None:
+    """`older_than=None` is the startup sweep: reap every active job
+    unconditionally, since a fresh process can't have a real one in flight."""
+    video = _create_video_row(db, registered_user.id, status=VideoStatus.processing)
+
+    reaped = video_service.reap_stuck_jobs(db)
+
+    assert reaped == 1
+    db.refresh(video)
+    assert video.status == VideoStatus.failed
+    assert video.error_message
+    assert "interrupted" in video.error_message or "timed out" in video.error_message
+
+
+def test_reap_stuck_jobs_ignores_terminal_statuses(db: Session, registered_user) -> None:
+    completed = _create_video_row(db, registered_user.id, status=VideoStatus.completed)
+    failed = _create_video_row(db, registered_user.id, status=VideoStatus.failed)
+
+    reaped = video_service.reap_stuck_jobs(db)
+
+    assert reaped == 0
+    db.refresh(completed)
+    db.refresh(failed)
+    assert completed.status == VideoStatus.completed
+    assert failed.status == VideoStatus.failed
+
+
+def test_reap_stuck_jobs_with_age_threshold_only_reaps_stale_rows(
+    db: Session, registered_user
+) -> None:
+    """The periodic watchdog only reaps jobs stale beyond the threshold,
+    leaving genuinely-in-progress jobs alone."""
+    stale = _create_video_row(db, registered_user.id, status=VideoStatus.downloading)
+    fresh = _create_video_row(db, registered_user.id, status=VideoStatus.processing)
+
+    # Backdate `stale`'s updated_at directly via a bulk UPDATE, which bypasses
+    # the mapped column's onupdate=func.now() default (only applied by the
+    # ORM's own flush of a modified instance, not a Query.update() call).
+    old_time = datetime.now(UTC) - timedelta(minutes=30)
+    db.query(Video).filter(Video.id == stale.id).update({"updated_at": old_time})
+    db.commit()
+
+    reaped = video_service.reap_stuck_jobs(db, older_than=timedelta(minutes=20))
+
+    assert reaped == 1
+    db.refresh(stale)
+    db.refresh(fresh)
+    assert stale.status == VideoStatus.failed
+    assert fresh.status == VideoStatus.processing

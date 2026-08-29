@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import tempfile
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 from fastapi import BackgroundTasks
@@ -29,6 +30,9 @@ from app.services.storage import get_storage_backend
 from app.services.youtube_downloader import download_video, validate_youtube_url
 
 logger = logging.getLogger(__name__)
+
+# Non-terminal statuses a job can be "stuck" in.
+_ACTIVE_STATUSES = (VideoStatus.pending, VideoStatus.downloading, VideoStatus.processing)
 
 
 def _source_key(video_id: int) -> str:
@@ -115,6 +119,47 @@ def process_video_job(video_id: int) -> None:
                 db.commit()
     finally:
         db.close()
+
+
+def reap_stuck_jobs(db: Session, *, older_than: timedelta | None = None) -> int:
+    """Mark stuck video jobs as `failed` so they don't poll forever.
+
+    A `Video` can be left in `pending`/`downloading`/`processing` forever if
+    the worker process that owned its `process_video_job` background task
+    crashes or is restarted mid-job (nothing else ever transitions it out of
+    that state), or if a network/subprocess call inside the pipeline hangs
+    without ever raising.
+
+    With `older_than=None`, every row in an active status is reaped
+    unconditionally — used once at startup, since a fresh process can't
+    possibly have a genuinely in-flight job yet: anything active in the DB
+    at boot is necessarily orphaned from a previous process. With
+    `older_than` set, only rows whose `updated_at` is older than that are
+    reaped — used by the periodic watchdog to catch jobs hung *within* an
+    otherwise-healthy running process, without touching jobs that are still
+    legitimately in progress.
+
+    Returns the number of rows reaped.
+    """
+    query = db.query(Video).filter(Video.status.in_(_ACTIVE_STATUSES))
+
+    if older_than is not None:
+        cutoff = datetime.now(UTC) - older_than
+        query = query.filter(Video.updated_at < cutoff)
+
+    stuck_jobs = query.all()
+    for video in stuck_jobs:
+        logger.warning(
+            "Reaping stuck video job id=%s status=%s updated_at=%s",
+            video.id,
+            video.status,
+            video.updated_at,
+        )
+        video.status = VideoStatus.failed
+        video.error_message = "Job timed out or was interrupted (server restart or a hung step)."
+    db.commit()
+
+    return len(stuck_jobs)
 
 
 def list_videos(db: Session, user_id: int, params: VideoListParams) -> list[Video]:

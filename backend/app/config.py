@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     # --- CORS ---
     ALLOWED_ORIGINS: list[str] = ["http://localhost:5173"]
 
+    # --- Stuck-job watchdog ---
+    # A video stuck in pending/downloading/processing for longer than this
+    # is assumed hung (or orphaned by a crashed/restarted worker) and is
+    # swept to `failed` by the periodic watchdog. Also applied unconditionally
+    # once at startup, since any such row at boot is necessarily orphaned
+    # from a previous process.
+    STUCK_JOB_TIMEOUT_MINUTES: int = 20
+    WATCHDOG_INTERVAL_SECONDS: int = 300
+
 
 @lru_cache
 def get_settings() -> Settings:
