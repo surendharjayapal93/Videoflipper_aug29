@@ -31,7 +31,11 @@ SILENCE_NOISE_THRESHOLD_DB = "-30dB"
 SILENCE_MIN_DURATION_SECONDS = 0.75
 MIN_ACTIVE_SEGMENT_SECONDS = 1.5
 FFPROBE_TIMEOUT_SECONDS = 30
-FFMPEG_ANALYZE_TIMEOUT_SECONDS = 10 * 60
+# Audio-only analysis of a full <=1hr source (no video re-encoding, just a
+# silencedetect pass) comfortably finishes well under this.
+FFMPEG_ANALYZE_TIMEOUT_SECONDS = 20 * 60
+# Rendering only ever touches the selected ~60s of output regardless of
+# source length, so this doesn't need to scale with MAX_DURATION_SECONDS.
 FFMPEG_RENDER_TIMEOUT_SECONDS = 15 * 60
 
 _SILENCE_START_RE = re.compile(r"silence_start:\s*([0-9.]+)")

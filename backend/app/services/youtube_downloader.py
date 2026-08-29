@@ -42,8 +42,8 @@ _ALLOWED_HOSTS = {
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
-MAX_DURATION_SECONDS = 10 * 60  # 10 minutes
-MAX_FILESIZE_BYTES = 200 * 1024 * 1024  # 200 MB
+MAX_DURATION_SECONDS = 60 * 60  # 1 hour
+MAX_FILESIZE_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB -- scaled up alongside the duration cap
 
 
 def validate_youtube_url(url: str) -> str:

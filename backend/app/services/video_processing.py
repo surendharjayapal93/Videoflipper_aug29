@@ -26,7 +26,7 @@ _FILTERS: dict[str, str] = {
     "both": "hflip,vflip",
 }
 
-FFMPEG_TIMEOUT_SECONDS = 15 * 60  # generous ceiling for a <=10min / <=200MB input
+FFMPEG_TIMEOUT_SECONDS = 60 * 60  # generous ceiling for a <=1hr / <=2GB input
 
 
 def flip_video(
