@@ -12,6 +12,7 @@ from sqlalchemy.sql import func
 from app.models.base import Base
 
 if TYPE_CHECKING:
+    from app.models.highlight import Highlight
     from app.models.refresh_token import RefreshToken
     from app.models.video import Video
 
@@ -37,6 +38,9 @@ class User(Base):
     )
     refresh_tokens: Mapped[list[RefreshToken]] = relationship(
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"
+    )
+    highlights: Mapped[list[Highlight]] = relationship(
+        "Highlight", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

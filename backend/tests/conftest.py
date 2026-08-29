@@ -50,6 +50,7 @@ from app.database import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.user import User
+from app.models.highlight import Highlight  # noqa: F401
 from app.models.refresh_token import RefreshToken  # noqa: F401
 from app.models.video import Video  # noqa: F401
 

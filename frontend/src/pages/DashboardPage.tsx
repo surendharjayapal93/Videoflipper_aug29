@@ -1,6 +1,7 @@
 import { isAxiosError } from 'axios';
 import { CircleCheck, CircleX, HardDrive, Loader2, Video } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { HighlightGenerator } from '@/components/dashboard/HighlightGenerator';
 import { RecentActivityList } from '@/components/dashboard/RecentActivityList';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { PageWrapper } from '@/components/layout/PageWrapper';
@@ -52,6 +53,8 @@ export function DashboardPage() {
             An overview of your video flipping activity.
           </p>
         </div>
+
+        <HighlightGenerator />
 
         {isLoading && <p className="text-sm text-muted-foreground">Loading your stats...</p>}
 

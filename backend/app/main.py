@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import SessionLocal
 from app.exceptions import register_exception_handlers
-from app.routers import auth, dashboard, videos
+from app.routers import auth, dashboard, highlights, videos
 from app.services.video_service import cleanup_expired_video_files, reap_stuck_jobs
 
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +102,7 @@ register_exception_handlers(app)
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(videos.router, prefix="/api/v1")
+app.include_router(highlights.router, prefix="/api/v1")
 
 
 @app.get("/health")

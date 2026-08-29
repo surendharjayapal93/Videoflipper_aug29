@@ -72,3 +72,23 @@ export interface DashboardStats {
   totalStorageBytes: number;
   recentActivity: VideoSummary[];
 }
+
+export type HighlightStatus =
+  | 'pending'
+  | 'downloading'
+  | 'analyzing'
+  | 'rendering'
+  | 'completed'
+  | 'failed';
+
+export interface Highlight {
+  id: number;
+  youtubeUrl: string;
+  sourceTitle: string | null;
+  status: HighlightStatus;
+  sourceDurationSeconds: number | null;
+  highlightDurationSeconds: number | null;
+  fileSizeBytes: number | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
