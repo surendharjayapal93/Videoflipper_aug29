@@ -1,0 +1,48 @@
+# Exact pins for reproducible builds. These are the versions this project
+# was actually built and tested against — bump deliberately (and re-run the
+# full test suite) rather than letting an open range silently drift.
+
+# --- Web framework ---
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+
+# --- Database ---
+sqlalchemy==2.0.52
+alembic==1.19.1
+psycopg2-binary==2.9.12
+
+# --- Validation / settings ---
+pydantic==2.13.5
+pydantic-settings==2.15.0
+email-validator==2.3.0
+
+# --- Auth (JWT + password hashing) ---
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+# passlib 1.7.4's bcrypt self-test is incompatible with bcrypt>=4.1 (which
+# raises instead of silently truncating >72 byte inputs) - pin below that.
+bcrypt==4.0.1
+python-multipart==0.0.32
+
+# --- Video processing ---
+# yt-dlp ships frequent releases to track YouTube's own changes; pinned
+# exactly so a rebuild doesn't silently jump versions. Bump deliberately
+# (e.g. monthly, or when extraction starts failing) and re-test.
+yt-dlp==2026.8.19
+# NOTE: video flipping shells out to the `ffmpeg` CLI binary directly via
+# subprocess (see app/services/video_processing.py) rather than depending
+# on the `ffmpeg-python` package. The `ffmpeg` binary must be on PATH
+# (already installed in the Docker image) - no additional pip package
+# is required for this.
+
+# --- Config ---
+python-dotenv==1.2.3
+
+# --- Testing ---
+pytest==9.1.1
+pytest-cov==7.1.0
+httpx==0.28.1
+
+# --- Linting / typing ---
+ruff==0.16.5
+mypy==2.3.1
