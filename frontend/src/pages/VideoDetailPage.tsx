@@ -158,7 +158,12 @@ export function VideoDetailPage() {
               <Button
                 type="button"
                 variant="destructive"
-                disabled={isDeleting}
+                disabled={isDeleting || ACTIVE_STATUSES.includes(video.status)}
+                title={
+                  ACTIVE_STATUSES.includes(video.status)
+                    ? "Can't delete while still processing"
+                    : undefined
+                }
                 onClick={() => void handleDelete()}
               >
                 {isDeleting ? 'Deleting...' : 'Delete'}

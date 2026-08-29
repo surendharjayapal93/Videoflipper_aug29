@@ -17,6 +17,15 @@ const FLIP_DIRECTION_LABELS: Record<Video['flipDirection'], string> = {
   both: 'Both',
 };
 
+/** Statuses the backend still has an in-flight background job for — the
+ * delete endpoint rejects deletion while a video is in one of these to
+ * avoid orphaning files mid-pipeline (see backend `video_service.delete_video`). */
+const ACTIVE_STATUSES: ReadonlySet<Video['status']> = new Set([
+  'pending',
+  'downloading',
+  'processing',
+]);
+
 export interface VideoCardProps {
   video: Video;
   /** Omit to hide the download action (e.g. on the plain list page). */
@@ -70,7 +79,12 @@ export function VideoCard({ video, onDownload, onDelete, isDownloading, isDeleti
                 type="button"
                 size="sm"
                 variant="destructive"
-                disabled={isDeleting}
+                disabled={isDeleting || ACTIVE_STATUSES.has(video.status)}
+                title={
+                  ACTIVE_STATUSES.has(video.status)
+                    ? "Can't delete while still processing"
+                    : undefined
+                }
                 onClick={() => onDelete(video.id)}
               >
                 {isDeleting ? 'Deleting...' : 'Delete'}

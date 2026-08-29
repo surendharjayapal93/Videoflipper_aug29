@@ -202,7 +202,28 @@ def get_download_path(video: Video) -> Path:
 
 
 def delete_video(db: Session, video: Video) -> None:
-    """Delete a video's DB row and its stored source/output files."""
+    """Delete a video's DB row and its stored source/output files.
+
+    Refuses to delete a job that's still active (`pending`/`downloading`/
+    `processing`). Without this, deleting mid-flight races the background
+    `process_video_job` task: the row disappears out from under it, but it
+    keeps writing to `storage` regardless, leaving orphaned source/output
+    files on disk with nothing left to reference or clean them up.
+
+    This is safe to check against the already-loaded `video` object (no
+    extra re-fetch/lock needed) because the status machine only moves
+    forward — active statuses eventually become `completed`/`failed`, and
+    a row never transitions back out of a terminal status. So a `video`
+    read as active might complete moments later (the caller just has to
+    retry), but a `video` read as terminal is guaranteed to stay terminal,
+    with the background task already done touching its row and files.
+    """
+    if video.status in _ACTIVE_STATUSES:
+        raise ConflictError(
+            "Cannot delete a video while it's still being processed. "
+            "Wait for it to finish (or fail) and try again."
+        )
+
     storage = get_storage_backend()
     storage.delete(_source_key(video.id))
     storage.delete(_output_key(video.id))

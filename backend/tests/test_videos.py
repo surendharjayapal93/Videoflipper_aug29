@@ -299,6 +299,42 @@ def test_delete_video_not_owned_returns_404(
     assert response.status_code == 404
 
 
+@pytest.mark.parametrize(
+    "active_status",
+    [VideoStatus.pending, VideoStatus.downloading, VideoStatus.processing],
+)
+def test_delete_video_conflict_while_active(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    registered_user,
+    db: Session,
+    active_status: VideoStatus,
+) -> None:
+    """Deleting a job that's still being processed must be rejected, not
+    race the background `process_video_job` task and orphan its files."""
+    video = _create_video_row(db, registered_user.id, status=active_status)
+    video_id = video.id
+
+    response = client.delete(f"/api/v1/videos/{video_id}", headers=auth_headers)
+
+    assert response.status_code == 409
+    # The row must still exist -- the delete was refused, not partially applied.
+    assert db.query(Video).filter(Video.id == video_id).first() is not None
+
+
+def test_delete_video_allowed_after_failed(
+    client: TestClient, auth_headers: dict[str, str], registered_user, db: Session
+) -> None:
+    """A terminal `failed` status (e.g. reaped by the watchdog) is deletable."""
+    video = _create_video_row(db, registered_user.id, status=VideoStatus.failed)
+    video_id = video.id
+
+    response = client.delete(f"/api/v1/videos/{video_id}", headers=auth_headers)
+
+    assert response.status_code == 204
+    assert db.query(Video).filter(Video.id == video_id).first() is None
+
+
 # --- reap_stuck_jobs (watchdog) --------------------------------------------------
 
 
