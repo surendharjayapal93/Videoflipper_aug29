@@ -180,6 +180,110 @@ def test_create_video_rejects_non_youtube_url(
     assert response.status_code == 422
 
 
+# --- resubmit dedup ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "active_status",
+    [VideoStatus.pending, VideoStatus.downloading, VideoStatus.processing],
+)
+def test_create_video_rejects_duplicate_active_job(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    registered_user,
+    db: Session,
+    active_status: VideoStatus,
+) -> None:
+    """Resubmitting the same video + flip direction while one is already
+    queued/processing must be rejected, not spin up a parallel duplicate job."""
+    _create_video_row(
+        db, registered_user.id, status=active_status, flip_direction=FlipDirection.horizontal
+    )
+
+    response = client.post(
+        "/api/v1/videos",
+        json={"youtube_url": VALID_URL, "flip_direction": "horizontal"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 409
+    # No second row was created for the duplicate attempt.
+    assert db.query(Video).filter(Video.youtube_video_id == "dQw4w9WgXcQ").count() == 1
+
+
+def test_create_video_allows_resubmit_after_terminal_status(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    registered_user,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the earlier job reaches a terminal status, resubmitting the same
+    video + flip direction (e.g. retrying a failed job) is allowed."""
+    monkeypatch.setattr(video_service, "download_video", _fake_download_success)
+    monkeypatch.setattr(video_service.video_processing, "flip_video", _fake_flip_success)
+    _create_video_row(
+        db, registered_user.id, status=VideoStatus.failed, flip_direction=FlipDirection.horizontal
+    )
+
+    response = client.post(
+        "/api/v1/videos",
+        json={"youtube_url": VALID_URL, "flip_direction": "horizontal"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 202
+
+
+def test_create_video_allows_different_flip_direction_while_active(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    registered_user,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A different flip direction on the same video is a genuinely different
+    job, not a duplicate, even while the first one is still active."""
+    monkeypatch.setattr(video_service, "download_video", _fake_download_success)
+    monkeypatch.setattr(video_service.video_processing, "flip_video", _fake_flip_success)
+    _create_video_row(
+        db, registered_user.id, status=VideoStatus.processing, flip_direction=FlipDirection.horizontal
+    )
+
+    response = client.post(
+        "/api/v1/videos",
+        json={"youtube_url": VALID_URL, "flip_direction": "vertical"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 202
+
+
+def test_create_video_allows_same_video_for_different_users(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    create_user,
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dedup is scoped per-user -- another user's active job for the same
+    video must not block this user's submission."""
+    monkeypatch.setattr(video_service, "download_video", _fake_download_success)
+    monkeypatch.setattr(video_service.video_processing, "flip_video", _fake_flip_success)
+    other_user, _ = create_user(email="other5@example.com")
+    _create_video_row(
+        db, other_user.id, status=VideoStatus.processing, flip_direction=FlipDirection.horizontal
+    )
+
+    response = client.post(
+        "/api/v1/videos",
+        json={"youtube_url": VALID_URL, "flip_direction": "horizontal"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 202
+
+
 # --- list endpoint filters ----------------------------------------------------
 
 

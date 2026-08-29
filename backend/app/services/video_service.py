@@ -46,14 +46,43 @@ def _output_key(video_id: int) -> str:
 def create_video_job(db: Session, background_tasks: BackgroundTasks, user_id: int, payload: VideoCreate) -> Video:
     """Validate the submitted URL, create a pending `Video` row, and
     schedule background processing.
+
+    Refuses (409 Conflict) to create a duplicate job if the same user
+    already has one active (pending/downloading/processing) for the same
+    video + flip direction — without this, a double-clicked submit button
+    or a resubmitted link spins up unlimited parallel jobs that each
+    independently re-download and re-encode the same source, for no
+    benefit (a genuinely different flip direction on the same video is a
+    different job and isn't blocked). This is a plain app-level check, not
+    a DB constraint: the tiny window between two near-simultaneous
+    requests both passing the check is an acceptable risk for what's
+    fundamentally a UX safeguard against accidental duplicates, not a
+    data-integrity invariant.
     """
     youtube_video_id = validate_youtube_url(payload.youtube_url)
+    flip_direction = FlipDirection(payload.flip_direction)
+
+    duplicate = (
+        db.query(Video)
+        .filter(
+            Video.user_id == user_id,
+            Video.youtube_video_id == youtube_video_id,
+            Video.flip_direction == flip_direction,
+            Video.status.in_(_ACTIVE_STATUSES),
+        )
+        .first()
+    )
+    if duplicate is not None:
+        raise ConflictError(
+            "This video is already queued or processing with this flip direction. "
+            "Wait for it to finish, or check your video list."
+        )
 
     video = Video(
         user_id=user_id,
         youtube_url=payload.youtube_url,
         youtube_video_id=youtube_video_id,
-        flip_direction=FlipDirection(payload.flip_direction),
+        flip_direction=flip_direction,
         status=VideoStatus.pending,
     )
     db.add(video)
