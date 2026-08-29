@@ -17,7 +17,7 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.exceptions import register_exception_handlers
 from app.routers import auth, dashboard, videos
-from app.services.video_service import reap_stuck_jobs
+from app.services.video_service import cleanup_expired_video_files, reap_stuck_jobs
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,16 +25,24 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-async def _watchdog_loop() -> None:
-    """Periodically fail any video job stuck too long in an active status.
+async def _maintenance_loop() -> None:
+    """Periodic background upkeep: reap stuck jobs and clean up old storage.
 
-    Guards against a download/flip step hanging (no exception ever raised)
-    within an otherwise-healthy running process. The startup sweep in
-    `lifespan` handles the "process crashed/restarted mid-job" case; this
-    loop handles the "process is fine but a job is hung" case.
+    Two independent concerns share one timer since both are cheap, DB-bound
+    sweeps with no reason to run on separate schedules:
+
+    - Reaping guards against a download/flip step hanging (no exception
+      ever raised) within an otherwise-healthy running process. The
+      startup sweep in `lifespan` handles the "process crashed/restarted
+      mid-job" case; this loop handles the "process is fine but a job is
+      hung" case.
+    - Cleanup deletes on-disk output files for old completed/failed jobs
+      so `backend/storage/` doesn't grow without bound; the `Video` row
+      (and its history) is kept either way.
     """
     interval = settings.WATCHDOG_INTERVAL_SECONDS
     stale_after = timedelta(minutes=settings.STUCK_JOB_TIMEOUT_MINUTES)
+    retention = timedelta(days=settings.STORAGE_RETENTION_DAYS)
     while True:
         await asyncio.sleep(interval)
         db = SessionLocal()
@@ -42,8 +50,12 @@ async def _watchdog_loop() -> None:
             reaped = await asyncio.to_thread(reap_stuck_jobs, db, older_than=stale_after)
             if reaped:
                 logger.warning("Watchdog reaped %d stuck video job(s)", reaped)
+
+            cleaned = await asyncio.to_thread(cleanup_expired_video_files, db, older_than=retention)
+            if cleaned:
+                logger.info("Storage cleanup removed files for %d expired video(s)", cleaned)
         except Exception:
-            logger.exception("Watchdog sweep failed")
+            logger.exception("Maintenance sweep failed")
         finally:
             db.close()
 
@@ -63,13 +75,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         db.close()
 
-    watchdog_task = asyncio.create_task(_watchdog_loop())
+    maintenance_task = asyncio.create_task(_maintenance_loop())
     try:
         yield
     finally:
-        watchdog_task.cancel()
+        maintenance_task.cancel()
         try:
-            await watchdog_task
+            await maintenance_task
         except asyncio.CancelledError:
             pass
         logger.info("%s shutting down", settings.APP_NAME)

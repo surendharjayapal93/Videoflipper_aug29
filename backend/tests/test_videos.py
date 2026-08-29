@@ -58,6 +58,7 @@ def _create_video_row(
     source_title: str | None = None,
     flip_direction: FlipDirection = FlipDirection.horizontal,
     file_size_bytes: int | None = None,
+    output_url: str | None = None,
 ) -> Video:
     video = Video(
         user_id=user_id,
@@ -67,11 +68,20 @@ def _create_video_row(
         flip_direction=flip_direction,
         status=status,
         file_size_bytes=file_size_bytes,
+        output_url=output_url,
     )
     db.add(video)
     db.commit()
     db.refresh(video)
     return video
+
+
+def _backdate_created_at(db: Session, video_id: int, when: datetime) -> None:
+    """Set `created_at` directly via a bulk UPDATE, bypassing the mapped
+    column's server_default (only applied on INSERT, not relevant here) so
+    tests can simulate an "old" row without waiting for real time to pass."""
+    db.query(Video).filter(Video.id == video_id).update({"created_at": when})
+    db.commit()
 
 
 # --- validate_youtube_url (pure, no mocking) ---------------------------------
@@ -389,3 +399,70 @@ def test_reap_stuck_jobs_with_age_threshold_only_reaps_stale_rows(
     db.refresh(fresh)
     assert stale.status == VideoStatus.failed
     assert fresh.status == VideoStatus.processing
+
+
+# --- cleanup_expired_video_files (storage retention) -----------------------------
+
+
+def _write_output_file(video_id: int) -> str:
+    """Write a real file through the test's patched storage backend and
+    return the `output_url` it produced, mirroring what `process_video_job`
+    stores on the row."""
+    storage = video_service.get_storage_backend()
+    path = storage.resolve_path(f"{video_id}/output.mp4")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"old flipped output")
+    return storage.save(f"{video_id}/output.mp4", path)
+
+
+def test_cleanup_removes_files_for_old_terminal_videos(db: Session, registered_user) -> None:
+    video = _create_video_row(db, registered_user.id, status=VideoStatus.completed)
+    video.output_url = _write_output_file(video.id)
+    db.commit()
+    _backdate_created_at(db, video.id, datetime.now(UTC) - timedelta(days=60))
+
+    storage = video_service.get_storage_backend()
+    output_path = storage.resolve_path(f"{video.id}/output.mp4")
+    assert output_path.exists()
+
+    cleaned = video_service.cleanup_expired_video_files(db, older_than=timedelta(days=30))
+
+    assert cleaned == 1
+    assert not output_path.exists()
+    db.refresh(video)
+    assert video.output_url is None
+    # The row itself (and its history) must survive -- only the file is gone.
+    assert db.query(Video).filter(Video.id == video.id).first() is not None
+
+
+def test_cleanup_ignores_recent_videos(db: Session, registered_user) -> None:
+    video = _create_video_row(db, registered_user.id, status=VideoStatus.completed)
+    video.output_url = _write_output_file(video.id)
+    db.commit()
+    # created_at defaults to "now" -- well within the retention window.
+
+    cleaned = video_service.cleanup_expired_video_files(db, older_than=timedelta(days=30))
+
+    assert cleaned == 0
+    db.refresh(video)
+    assert video.output_url is not None
+
+
+def test_cleanup_ignores_active_videos_regardless_of_age(db: Session, registered_user) -> None:
+    video = _create_video_row(db, registered_user.id, status=VideoStatus.processing)
+    _backdate_created_at(db, video.id, datetime.now(UTC) - timedelta(days=60))
+
+    cleaned = video_service.cleanup_expired_video_files(db, older_than=timedelta(days=30))
+
+    assert cleaned == 0
+
+
+def test_cleanup_ignores_already_cleaned_videos(db: Session, registered_user) -> None:
+    """A video whose output_url is already None (previously cleaned, or a
+    failed job that never produced a file) isn't re-processed every sweep."""
+    video = _create_video_row(db, registered_user.id, status=VideoStatus.failed, output_url=None)
+    _backdate_created_at(db, video.id, datetime.now(UTC) - timedelta(days=60))
+
+    cleaned = video_service.cleanup_expired_video_files(db, older_than=timedelta(days=30))
+
+    assert cleaned == 0

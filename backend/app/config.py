@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     STUCK_JOB_TIMEOUT_MINUTES: int = 20
     WATCHDOG_INTERVAL_SECONDS: int = 300
 
+    # --- Storage retention ---
+    # Output files for completed/failed jobs older than this are deleted by
+    # the periodic maintenance loop (the DB row is kept for history — the
+    # download endpoint just 404s once the file is gone). Raw downloaded
+    # source files are never persisted past a job's own run in the first
+    # place (see video_service.process_video_job), so this only bounds
+    # `output.mp4` growth in backend/storage/.
+    STORAGE_RETENTION_DAYS: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -99,10 +99,12 @@ def process_video_job(video_id: int) -> None:
 
                 video_processing.flip_video(source_path, output_path, video.flip_direction.value)
 
-                video.storage_url = storage.save(_source_key(video_id), source_path)
-                output_ref = storage.save(_output_key(video_id), output_path)
-
-                video.output_url = output_ref
+                # The downloaded source is never served to users (only the
+                # flipped output is) and is deleted automatically when this
+                # `TemporaryDirectory` block exits below — deliberately not
+                # copied into permanent storage, so per-job disk usage is
+                # roughly half of what it'd otherwise be.
+                video.output_url = storage.save(_output_key(video_id), output_path)
                 video.file_size_bytes = output_path.stat().st_size
                 video.status = VideoStatus.completed
                 db.commit()
@@ -160,6 +162,47 @@ def reap_stuck_jobs(db: Session, *, older_than: timedelta | None = None) -> int:
     db.commit()
 
     return len(stuck_jobs)
+
+
+def cleanup_expired_video_files(db: Session, *, older_than: timedelta) -> int:
+    """Delete on-disk files for old, terminal-status videos to bound storage growth.
+
+    Without this, `backend/storage/` grows without bound: every completed
+    job's output file is kept forever with no retention policy. This only
+    ever deletes files, never the `Video` row itself — history stays intact
+    and `GET /videos/{id}/download` already 404s gracefully via
+    `get_download_path` once the underlying file is gone.
+
+    Only rows with `output_url` still set are considered, so a row already
+    cleaned up (or one whose output was never persisted, e.g. a `failed`
+    job) isn't re-processed on every sweep — `output_url` doubles as the
+    "has a file worth cleaning up" marker.
+
+    Returns the number of videos cleaned up.
+    """
+    cutoff = datetime.now(UTC) - older_than
+    expired = (
+        db.query(Video)
+        .filter(
+            Video.status.in_((VideoStatus.completed, VideoStatus.failed)),
+            Video.output_url.is_not(None),
+            Video.created_at < cutoff,
+        )
+        .all()
+    )
+
+    if not expired:
+        return 0
+
+    storage = get_storage_backend()
+    for video in expired:
+        logger.info("Cleaning up expired storage for video id=%s (created_at=%s)", video.id, video.created_at)
+        storage.delete(_source_key(video.id))
+        storage.delete(_output_key(video.id))
+        video.output_url = None
+    db.commit()
+
+    return len(expired)
 
 
 def list_videos(db: Session, user_id: int, params: VideoListParams) -> list[Video]:
