@@ -32,7 +32,10 @@ class Settings(BaseSettings):
     STORAGE_SECRET_KEY: str
 
     # --- CORS ---
-    ALLOWED_ORIGINS: list[str] = ["http://localhost:5173"]
+    # http://localhost:5173 is the Vite dev server; http://localhost (port 80,
+    # which browsers omit from the Origin header) is where docker-compose's
+    # nginx-served frontend runs by default.
+    ALLOWED_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost"]
 
     # --- Stuck-job watchdog ---
     # A video stuck in pending/downloading/processing for longer than this
